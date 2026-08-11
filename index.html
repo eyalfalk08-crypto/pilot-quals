@@ -109,13 +109,6 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#f0fdfa;color:
       <label>סיסמה</label>
       <input type="password" id="auth-password" placeholder="לפחות 6 תווים" autocomplete="off">
     </div>
-    <div class="field" id="role-field" style="display:none;">
-      <label>סוג משתמש (לבדיקה בלבד)</label>
-      <select id="auth-role">
-        <option value="employee">עובד</option>
-        <option value="manager">מנהל</option>
-      </select>
-    </div>
 
     <button class="btn" id="auth-submit" onclick="doAuth()">כניסה</button>
     <div class="err" id="auth-error"></div>
@@ -225,7 +218,6 @@ window.switchTab=function(mode){
   authMode=mode;
   document.getElementById('tab-login').classList.toggle('active',mode==='login');
   document.getElementById('tab-register').classList.toggle('active',mode==='register');
-  document.getElementById('role-field').style.display=mode==='register'?'block':'none';
   document.getElementById('auth-submit').textContent=mode==='login'?'כניסה':'הרשמה';
   document.getElementById('auth-error').textContent='';
 };
@@ -241,12 +233,12 @@ window.doAuth=async function(){
   sl(true);
   try{
     if(authMode==='register'){
-      const role=document.getElementById('auth-role').value;
       const cred=await auth.createUserWithEmailAndPassword(email,password);
-      // Store profile (name + role) under the user's own UID
+      // Everyone registers as an employee. Manager role is granted only manually
+      // in the Firebase Console — it can never be chosen here.
       await db.ref('users/'+cred.user.uid).set({
         name:username,
-        role:role,
+        role:'employee',
         data:'',
         createdAt:Date.now()
       });
