@@ -688,7 +688,15 @@ function showFirebaseError(){
 
 async function getEmployees(){
   if(cachedEmployees) return cachedEmployees;
-  cachedEmployees=await fbGet('quals_config/employees')||DEFAULT_EMPLOYEES;
+  // New model: employees are the registered auth users with role 'employee'.
+  // Each is returned as {id: <uid>, name} so all existing manager screens
+  // (assignments, availability, dashboard) keep working unchanged.
+  const authUsers=await fbGet('authUsers')||{};
+  const list=Object.entries(authUsers)
+    .filter(([,u])=>u && u.role!=='manager')
+    .map(([uid,u])=>({id:uid,name:u.name||'עובד'}))
+    .sort((a,b)=>a.name<b.name?-1:(a.name>b.name?1:0));
+  cachedEmployees=list;
   return cachedEmployees;
 }
 async function getQuals(){
@@ -1576,55 +1584,42 @@ async function buildEmployeeManager(){
 }
 function renderEmpRows(emps){
   const c=document.getElementById('emp-manage-list');c.innerHTML='';
+  if(!emps.length){
+    c.innerHTML='<div style="color:#888;font-size:13px;padding:1rem;text-align:center;">אין עובדים רשומים עדיין. עובדים מופיעים כאן אוטומטית לאחר שהם נרשמים למערכת.</div>';
+    return;
+  }
   emps.forEach((emp,i)=>{
     const div=document.createElement('div');div.className='emp-manage-row';
     div.innerHTML=
       '<div class="emp-manage-num">'+(i+1)+'</div>'+
-      '<div style="display:flex;flex-direction:column;flex:1;gap:3px;min-width:90px;">'+
-        '<span class="emp-manage-label">שם תצוגה</span>'+
-        '<input class="emp-manage-name" type="text" value="'+emp.name+'" id="emp-name-'+i+'"></div>'+
-      '<div style="display:flex;flex-direction:column;gap:3px;">'+
-        '<span class="emp-manage-label">קוד (4 ספרות)</span>'+
-        '<input class="emp-manage-pin" type="text" value="'+emp.pin+'" id="emp-pin-'+i+'" maxlength="4" inputmode="numeric"></div>'+
-      '<button class="btn-del-emp" onclick="deleteEmployee('+i+')" title="מחק">×</button>';
+      '<div style="flex:1;min-width:90px;font-weight:600;">'+emp.name+'</div>'+
+      '<button class="btn-del-emp" onclick="deleteEmployee(\''+emp.id+'\',\''+emp.name.replace(/'/g,"\\'")+'\')" title="מחק עובד">×</button>';
     c.appendChild(div);
   });
 }
+// In the new model employees self-register, so there is no "add" or PIN editing.
 window.addEmployee=function(){
-  _workingEmps.forEach((emp,i)=>{
-    const n=document.getElementById('emp-name-'+i);const p=document.getElementById('emp-pin-'+i);
-    if(n)emp.name=n.value.trim()||emp.name;if(p)emp.pin=p.value.trim()||emp.pin;
-  });
-  _workingEmps.push({id:'emp'+Date.now(),name:'עובד '+(_workingEmps.length+1),pin:'0000'});
-  renderEmpRows(_workingEmps);
+  alert('עובדים נרשמים בעצמם דרך מסך ההרשמה — הם יופיעו כאן אוטומטית.');
 };
-window.deleteEmployee=function(idx){
-  if(_workingEmps.length<=1){alert('חייב להיות לפחות עובד אחד');return;}
-  if(!confirm('למחוק "'+_workingEmps[idx].name+'"?'))return;
-  _workingEmps.splice(idx,1);renderEmpRows(_workingEmps);
-};
-window.saveEmployeeManage=async function(){
-  let errors=[];
-  const updated=_workingEmps.map((emp,i)=>{
-    const n=document.getElementById('emp-name-'+i);
-    const p=document.getElementById('emp-pin-'+i);
-    const newName=n?n.value.trim():emp.name;
-    const newPin=p?p.value.trim():emp.pin;
-    if(!newName) errors.push('שם עובד '+(i+1)+' ריק');
-    if(!/^\d{4}$/.test(newPin)){if(p)p.style.borderColor='#e53e3e';errors.push('קוד עובד '+(i+1)+' חייב להיות 4 ספרות');}
-    else{if(p)p.style.borderColor='#e0e0e0';}
-    return{...emp,name:newName,pin:newPin};
-  });
-  if(errors.length){alert('שגיאות:\n'+errors.join('\n'));return;}
+window.deleteEmployee=async function(uid,name){
+  if(!confirm('למחוק את "'+name+'"? הפעולה תסיר את הפרופיל שלו והשיוכים אליו.'))return;
   showLoading(true);
-  await fbSet('quals_config/employees',updated);
-  cachedEmployees=updated;_workingEmps=updated;
+  try{
+    await db.ref('authUsers/'+uid).remove();
+    await db.ref('quals_config/assignments/'+uid).remove();
+    await db.ref('quals_config/unavailability/'+uid).remove();
+    cachedEmployees=null;cachedAssignments=null;cachedUnavailability=null;
+    await buildEmployeeManager();
+    await renderMasterView();
+    await buildAssignmentEditor();
+    await buildAvailabilityTable();
+  }catch(e){ alert('שגיאה במחיקה: '+e.message); }
   showLoading(false);
-  buildLoginSelect();
   showSaveMsg('emp-manage-msg');
-  await renderMasterView();
-  await buildAssignmentEditor();
-  await buildAvailabilityTable();
+};
+// Kept as a no-op: employee profiles are managed via self-registration + delete.
+window.saveEmployeeManage=async function(){
+  showSaveMsg('emp-manage-msg');
 };
 
 // ===== EMPLOYEE AVAILABILITY (mark as unavailable for a date range) =====
