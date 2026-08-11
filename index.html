@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0f766e">
+<title>פיילוט אבטחה — מערכת כשירויות</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#f0fdfa;color:#134e4a;min-height:100vh;direction:rtl;-webkit-font-smoothing:antialiased;}
+
+#loading{position:fixed;inset:0;background:rgba(255,255,255,.96);z-index:999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1rem;}
+.spinner{width:44px;height:44px;border:4px solid #ccfbf1;border-top-color:#0f766e;border-radius:50%;animation:spin .7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-text{font-size:14px;color:#0f766e;font-weight:600;}
+
+#config-error{position:fixed;inset:0;background:#fff;z-index:998;display:none;flex-direction:column;align-items:center;justify-content:center;padding:2rem;text-align:center;gap:1rem;}
+#config-error h2{color:#dc2626;font-size:20px;}
+#config-error p{color:#666;font-size:14px;max-width:440px;line-height:1.7;}
+#config-error code{background:#f1f5f9;padding:2px 8px;border-radius:5px;font-size:13px;}
+
+.wrap{max-width:560px;margin:0 auto;padding:1.2rem;}
+
+/* AUTH SCREEN */
+#auth-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#134e4a,#0f766e,#14b8a6);padding:1rem;}
+.auth-card{background:#fff;border-radius:20px;padding:2.4rem 2rem;width:100%;max-width:400px;box-shadow:0 25px 60px rgba(0,0,0,.3);}
+.auth-logo{text-align:center;margin-bottom:1.8rem;}
+.auth-logo .icon{width:64px;height:64px;background:linear-gradient(135deg,#0f766e,#14b8a6);border-radius:18px;display:inline-flex;align-items:center;justify-content:center;font-size:30px;margin-bottom:1rem;}
+.auth-logo h1{font-size:22px;font-weight:800;color:#134e4a;}
+.auth-logo p{font-size:13px;color:#94a3b8;margin-top:4px;}
+.pilot-badge{display:inline-block;background:#ccfbf1;color:#0f766e;font-size:11px;font-weight:700;padding:3px 12px;border-radius:20px;margin-top:8px;}
+.field{margin-bottom:1.1rem;}
+.field label{display:block;font-size:12px;font-weight:700;color:#555;margin-bottom:6px;}
+.field input,.field select{width:100%;padding:12px 14px;border:1.5px solid #e2e8f0;border-radius:10px;font-size:14px;outline:none;direction:rtl;transition:border .2s,box-shadow .2s;}
+.field input:focus,.field select:focus{border-color:#0f766e;box-shadow:0 0 0 3px rgba(15,118,110,.1);}
+.btn{width:100%;padding:14px;background:linear-gradient(135deg,#0f766e,#14b8a6);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;box-shadow:0 4px 14px rgba(15,118,110,.35);transition:transform .1s;}
+.btn:active{transform:scale(.98);}
+.btn-link{background:none;border:none;color:#0f766e;font-size:13px;font-weight:600;cursor:pointer;text-decoration:underline;margin-top:1rem;display:block;width:100%;text-align:center;}
+.err{color:#dc2626;font-size:12px;text-align:center;margin-top:8px;min-height:18px;}
+.toggle-row{display:flex;gap:6px;background:#f1f5f9;border-radius:10px;padding:4px;margin-bottom:1.4rem;}
+.toggle-row button{flex:1;padding:9px;border:none;background:none;border-radius:8px;font-size:13px;font-weight:700;color:#94a3b8;cursor:pointer;transition:all .2s;}
+.toggle-row button.active{background:#fff;color:#0f766e;box-shadow:0 1px 4px rgba(0,0,0,.08);}
+
+/* APP */
+#app{display:none;min-height:100vh;}
+.header{background:linear-gradient(135deg,#134e4a,#0f766e);color:#fff;padding:0 1.2rem;height:56px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;}
+.header .title{font-size:16px;font-weight:800;}
+.header .right{display:flex;align-items:center;gap:.6rem;}
+.header .user{font-size:12px;color:#99f6e4;}
+.role-badge{font-size:10px;background:rgba(255,255,255,.18);padding:3px 10px;border-radius:20px;}
+.btn-logout{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);color:#fff;padding:7px 14px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;}
+
+.card{background:#fff;border-radius:14px;padding:1.4rem;box-shadow:0 1px 3px rgba(15,118,110,.08),0 4px 12px rgba(15,118,110,.06);margin-bottom:1rem;border:1px solid rgba(15,118,110,.06);}
+.card h3{font-size:15px;font-weight:700;margin-bottom:1rem;color:#134e4a;}
+.info-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:14px;}
+.info-row:last-child{border-bottom:none;}
+.info-row .label{color:#94a3b8;}
+.info-row .value{font-weight:700;color:#134e4a;}
+
+.data-box{background:#f0fdfa;border:1px solid #99f6e4;border-radius:10px;padding:1rem;margin-top:.8rem;}
+.data-box textarea{width:100%;border:1.5px solid #e2e8f0;border-radius:8px;padding:10px;font-size:13px;font-family:inherit;resize:vertical;outline:none;direction:rtl;}
+.data-box textarea:focus{border-color:#0f766e;}
+.save-msg{color:#059669;font-size:12px;margin-top:6px;opacity:0;transition:opacity .3s;font-weight:600;}
+.save-msg.show{opacity:1;}
+
+.mgr-section{border-top:2px solid #ccfbf1;margin-top:1rem;padding-top:1rem;}
+.emp-row{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#f8fafc;border-radius:10px;margin-bottom:6px;font-size:13px;flex-wrap:wrap;}
+.emp-row .name{flex:1;font-weight:600;min-width:80px;}
+.emp-row .peek{font-size:11px;color:#94a3b8;}
+.badge-role{font-size:10px;padding:2px 8px;border-radius:6px;font-weight:700;}
+.badge-mgr{background:#fef3c7;color:#92400e;}
+.badge-emp{background:#dbeafe;color:#1e40af;}
+
+.test-note{background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:.8rem 1rem;font-size:12px;color:#92400e;line-height:1.6;margin-bottom:1rem;}
+.copyright{text-align:center;font-size:11px;color:#94a3b8;padding:1.5rem 1rem 2rem;}
+</style>
+</head>
+<body>
+<div id="loading"><div class="spinner"></div><div class="loading-text">טוען...</div></div>
+
+<div id="config-error">
+  <h2>⚙️ צריך להגדיר Firebase</h2>
+  <p>הקובץ מוכן, אבל עדיין לא הוזנו פרטי החיבור. יש למלא את <code>firebaseConfig</code> בקוד (בסימון <code>// TODO</code>) עם הפרטים מהפרויקט החדש שיצרת ב-Firebase Console.</p>
+</div>
+
+<!-- AUTH SCREEN -->
+<div id="auth-screen">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <div class="icon">🔐</div>
+      <h1>מערכת כשירויות</h1>
+      <p>התחברות מאובטחת</p>
+      <div class="pilot-badge">גרסת פיילוט — בדיקת אבטחה</div>
+    </div>
+
+    <div class="toggle-row">
+      <button id="tab-login" class="active" onclick="switchTab('login')">כניסה</button>
+      <button id="tab-register" onclick="switchTab('register')">הרשמה</button>
+    </div>
+
+    <div class="field">
+      <label>שם משתמש</label>
+      <input type="text" id="auth-username" placeholder="לדוגמה: דני כהן" autocomplete="off">
+    </div>
+    <div class="field">
+      <label>סיסמה</label>
+      <input type="password" id="auth-password" placeholder="לפחות 6 תווים" autocomplete="off">
+    </div>
+    <div class="field" id="role-field" style="display:none;">
+      <label>סוג משתמש (לבדיקה בלבד)</label>
+      <select id="auth-role">
+        <option value="employee">עובד</option>
+        <option value="manager">מנהל</option>
+      </select>
+    </div>
+
+    <button class="btn" id="auth-submit" onclick="doAuth()">כניסה</button>
+    <div class="err" id="auth-error"></div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+  <div class="header">
+    <div class="title">🔐 פיילוט אבטחה</div>
+    <div class="right">
+      <span class="role-badge" id="hdr-role"></span>
+      <span class="user" id="hdr-user"></span>
+      <button class="btn-logout" onclick="doLogout()">יציאה</button>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="test-note">
+      🧪 <b>זו אפליקציית בדיקה.</b> המטרה: לוודא שהאבטחה החדשה עובדת — כל עובד רואה ועורך רק את הנתונים של עצמו, ומנהל רואה את כולם. הנתונים כאן הם דמה בלבד.
+    </div>
+
+    <div class="card">
+      <h3>👤 הפרטים שלי</h3>
+      <div class="info-row"><span class="label">שם משתמש</span><span class="value" id="my-name"></span></div>
+      <div class="info-row"><span class="label">תפקיד</span><span class="value" id="my-role"></span></div>
+      <div class="info-row"><span class="label">מזהה משתמש (UID)</span><span class="value" id="my-uid" style="font-size:11px;direction:ltr;"></span></div>
+
+      <div class="data-box">
+        <label style="font-size:12px;font-weight:700;color:#555;display:block;margin-bottom:6px;">📝 הנתונים הפרטיים שלי (רק אני יכול לערוך)</label>
+        <textarea id="my-data" rows="3" placeholder="כתוב כאן משהו ולחץ שמור..."></textarea>
+        <button class="btn" style="margin-top:8px;padding:10px;font-size:13px;" onclick="saveMyData()">שמור</button>
+        <div class="save-msg" id="my-data-msg">נשמר! ✓</div>
+      </div>
+    </div>
+
+    <!-- Manager-only section -->
+    <div class="card mgr-section" id="mgr-only" style="display:none;">
+      <h3>👑 תצוגת מנהל — כל העובדים</h3>
+      <p style="font-size:12px;color:#94a3b8;margin-bottom:.8rem;">רק מנהל יכול לראות את הרשימה הזו. עובד רגיל שינסה — ייחסם על ידי כללי האבטחה.</p>
+      <div id="all-emps"></div>
+    </div>
+
+    <div class="copyright">© כל הזכויות שמורות לאיל פלק · גרסת פיילוט</div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// TODO: הדבק כאן את firebaseConfig מהפרויקט החדש שיצרת
+// (Project Settings ← General ← Your apps ← Web app ← Config)
+// ============================================================
+const firebaseConfig = {
+  apiKey:            "AIzaSyC8VGOTG2zRfrMORaqzNjy_qhzxiFalPXY",
+  authDomain:        "pilot-quals.firebaseapp.com",
+  databaseURL:       "https://pilot-quals-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId:         "pilot-quals",
+  storageBucket:     "pilot-quals.firebasestorage.app",
+  messagingSenderId: "946741203126",
+  appId:             "1:946741203126:web:8aa1520c651cdbef5e9617"
+};
+
+// Fake email domain — turns a username into an email Firebase Auth accepts,
+// so employees never need a real email. "דני כהן" -> "<hash>@quals-pilot.local"
+const FAKE_DOMAIN = "quals-pilot.local";
+
+let db=null, auth=null, CU=null, CU_ROLE=null, CU_NAME=null;
+let authMode='login';
+
+function sl(v){document.getElementById('loading').style.display=v?'flex':'none';}
+function showConfigError(){document.getElementById('loading').style.display='none';document.getElementById('config-error').style.display='flex';}
+function ssm(id){const m=document.getElementById(id);if(m){m.classList.add('show');setTimeout(()=>m.classList.remove('show'),2200);}}
+
+// Turn a Hebrew/any username into a stable, email-safe local part.
+function usernameToEmail(username){
+  const norm=username.trim().toLowerCase();
+  let h=0;
+  for(let i=0;i<norm.length;i++){h=((h<<5)-h+norm.charCodeAt(i))|0;}
+  const safe='u'+Math.abs(h).toString(36)+'_'+encodeURIComponent(norm).replace(/[^a-z0-9]/gi,'').slice(0,12);
+  return safe+'@'+FAKE_DOMAIN;
+}
+
+// ---- Init ----
+if(!firebaseConfig.apiKey || !firebaseConfig.databaseURL){
+  showConfigError();
+} else {
+  try{
+    firebase.initializeApp(firebaseConfig);
+    db=firebase.database();
+    auth=firebase.auth();
+    auth.onAuthStateChanged(async function(user){
+      if(user){
+        CU=user;
+        await afterLogin();
+      } else {
+        CU=null;CU_ROLE=null;CU_NAME=null;
+        document.getElementById('app').style.display='none';
+        document.getElementById('auth-screen').style.display='flex';
+      }
+      sl(false);
+    });
+  }catch(e){console.error(e);showConfigError();}
+}
+
+// ---- Auth UI ----
+window.switchTab=function(mode){
+  authMode=mode;
+  document.getElementById('tab-login').classList.toggle('active',mode==='login');
+  document.getElementById('tab-register').classList.toggle('active',mode==='register');
+  document.getElementById('role-field').style.display=mode==='register'?'block':'none';
+  document.getElementById('auth-submit').textContent=mode==='login'?'כניסה':'הרשמה';
+  document.getElementById('auth-error').textContent='';
+};
+
+window.doAuth=async function(){
+  const username=document.getElementById('auth-username').value.trim();
+  const password=document.getElementById('auth-password').value;
+  const err=document.getElementById('auth-error');
+  err.textContent='';
+  if(!username){err.textContent='יש להזין שם משתמש';return;}
+  if(password.length<6){err.textContent='הסיסמה חייבת להיות לפחות 6 תווים';return;}
+  const email=usernameToEmail(username);
+  sl(true);
+  try{
+    if(authMode==='register'){
+      const role=document.getElementById('auth-role').value;
+      const cred=await auth.createUserWithEmailAndPassword(email,password);
+      // Store profile (name + role) under the user's own UID
+      await db.ref('users/'+cred.user.uid).set({
+        name:username,
+        role:role,
+        data:'',
+        createdAt:Date.now()
+      });
+      // afterLogin will run via onAuthStateChanged
+    } else {
+      await auth.signInWithEmailAndPassword(email,password);
+    }
+  }catch(e){
+    sl(false);
+    err.textContent=translateAuthError(e.code);
+  }
+};
+
+function translateAuthError(code){
+  switch(code){
+    case 'auth/email-already-in-use': return 'שם המשתמש כבר קיים — נסה להתחבר במקום';
+    case 'auth/invalid-credential':
+    case 'auth/wrong-password':
+    case 'auth/user-not-found': return 'שם משתמש או סיסמה שגויים';
+    case 'auth/weak-password': return 'הסיסמה חלשה מדי (לפחות 6 תווים)';
+    case 'auth/network-request-failed': return 'בעיית חיבור — נסה שוב';
+    default: return 'שגיאה: '+code;
+  }
+}
+
+window.doLogout=function(){ auth.signOut(); };
+
+// ---- After login ----
+async function afterLogin(){
+  const snap=await db.ref('users/'+CU.uid).once('value');
+  const profile=snap.val()||{};
+  CU_ROLE=profile.role||'employee';
+  CU_NAME=profile.name||'(ללא שם)';
+
+  document.getElementById('auth-screen').style.display='none';
+  document.getElementById('app').style.display='block';
+
+  document.getElementById('hdr-user').textContent=CU_NAME;
+  document.getElementById('hdr-role').textContent=CU_ROLE==='manager'?'מנהל':'עובד';
+  document.getElementById('my-name').textContent=CU_NAME;
+  document.getElementById('my-role').textContent=CU_ROLE==='manager'?'מנהל 👑':'עובד';
+  document.getElementById('my-uid').textContent=CU.uid;
+  document.getElementById('my-data').value=profile.data||'';
+
+  if(CU_ROLE==='manager'){
+    document.getElementById('mgr-only').style.display='block';
+    loadAllEmployees();
+  } else {
+    document.getElementById('mgr-only').style.display='none';
+  }
+}
+
+window.saveMyData=async function(){
+  const val=document.getElementById('my-data').value;
+  try{
+    await db.ref('users/'+CU.uid+'/data').set(val);
+    ssm('my-data-msg');
+  }catch(e){
+    alert('שגיאה בשמירה: '+e.message+'\n(אם זו שגיאת הרשאה — כללי האבטחה עובדים!)');
+  }
+}
+
+// Manager: read all users. Rules must allow this only for managers.
+async function loadAllEmployees(){
+  const box=document.getElementById('all-emps');
+  box.innerHTML='<div style="color:#94a3b8;font-size:13px;">טוען...</div>';
+  try{
+    const snap=await db.ref('users').once('value');
+    const users=snap.val()||{};
+    const entries=Object.entries(users);
+    if(!entries.length){box.innerHTML='<div style="color:#94a3b8;font-size:13px;">אין עובדים עדיין</div>';return;}
+    box.innerHTML='';
+    entries.forEach(([uid,u])=>{
+      const row=document.createElement('div');
+      row.className='emp-row';
+      row.innerHTML=
+        '<span class="name">'+(u.name||'?')+'</span>'+
+        '<span class="badge-role '+(u.role==='manager'?'badge-mgr':'badge-emp')+'">'+(u.role==='manager'?'מנהל':'עובד')+'</span>'+
+        '<span class="peek">'+(u.data?('📝 '+u.data.slice(0,30)):'—')+'</span>';
+      box.appendChild(row);
+    });
+  }catch(e){
+    box.innerHTML='<div style="color:#dc2626;font-size:13px;">⛔ אין הרשאה לקרוא את כל העובדים (זה תקין אם אתה לא מנהל!)</div>';
+  }
+}
+
+// Enter key submits
+document.getElementById('auth-password').addEventListener('keydown',e=>{if(e.key==='Enter')doAuth();});
+</script>
+</body>
+</html>
