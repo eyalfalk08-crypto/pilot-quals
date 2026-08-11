@@ -221,7 +221,7 @@ tbody td{padding:10px 12px;font-size:13px;vertical-align:middle;}
 <div id="firebase-error">
   <h2>בעיית חיבור</h2>
   <p>לא הצלחנו להתחבר לשרת. זה קורה לרוב כשהחיבור לאינטרנט איטי או לא יציב.</p>
-  <p style="font-size:13px;color:#999;">בדקו את חיבור האינטרנט ונסו שוב. אם הבעיה חוזרת שוב ושוב — ודאו שמופעל <b>Anonymous Authentication</b> תחת Firebase Console ← Authentication ← Sign-in method.</p>
+  <p style="font-size:13px;color:#999;">בדקו את חיבור האינטרנט ונסו שוב. אם הבעיה חוזרת שוב ושוב — ודאו שמופעל <b>Email/Password</b> תחת Firebase Console ← Authentication ← Sign-in method.</p>
   <button onclick="location.reload()" style="background:#1a1a2e;color:white;border:none;padding:13px 34px;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;margin-top:.5rem;">נסה שוב</button>
 </div>
 
@@ -982,27 +982,27 @@ var _t=setInterval(function(){
     showFirebaseError();
     return;
   }
-  if(!db) return;
+  if(!db || !auth) return;
   _started=true;
   clearInterval(_t);
-  // Seed default config once (safe: only writes if missing). The auth-state
-  // listener decides whether to show the login screen or route into the app.
-  db.ref('quals_config').once('value').then(function(snap){
-    var cfg=snap.val()||{};
-    var p=Promise.resolve();
-    if(!cfg.qualifications) p=p.then(function(){return db.ref('quals_config/qualifications').set(DEFAULT_QUALS);});
-    return p;
-  }).then(function(){
-    // If no user is signed in yet, onAuthStateChanged already shows the login screen.
-    if(!auth || !auth.currentUser){
-      showLoading(false);
-      document.getElementById('login-screen').style.display='flex';
-    }
-  }).catch(function(e){
-    console.error('init error',e);
-    showFirebaseError();
-  });
+  // Do NOT touch the database before login — the security rules require an
+  // authenticated user. The auth-state listener shows the login screen when
+  // signed out, or routes into the app when signed in. Defaults are seeded
+  // lazily after a manager enters (see seedDefaultsIfManager).
+  if(!auth.currentUser){
+    showLoading(false);
+    document.getElementById('login-screen').style.display='flex';
+  }
 },200);
+
+// Seed default qualifications once, but only when a manager is logged in
+// (writes are allowed for them). Safe no-op if data already exists.
+async function seedDefaultsIfManager(){
+  try{
+    const cfg=await fbGet('quals_config/qualifications');
+    if(!cfg){ await fbSet('quals_config/qualifications',DEFAULT_QUALS); }
+  }catch(e){ console.error('seed skipped',e); }
+}
 
 window.doLogout=function(){
   try{ if(masterUnsub){masterUnsub();} }catch(e){ console.error('שגיאה בניתוק מאזין:',e); }
@@ -1101,6 +1101,7 @@ async function enterMaster(){
   document.getElementById('header-user-name').textContent='מנהל ראשי';
   document.getElementById('employee-view').style.display='none';
   document.getElementById('master-view').style.display='block';
+  await seedDefaultsIfManager();
   setupForegroundMessages();
   await setupPushNotifications('master');
   await renderMasterView();
