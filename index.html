@@ -242,6 +242,10 @@ tbody td{padding:10px 12px;font-size:13px;vertical-align:middle;}
       <label>סיסמה</label>
       <input type="password" id="login-password" placeholder="לפחות 6 תווים" autocomplete="off">
     </div>
+    <div class="form-group" id="regcode-field" style="display:none;">
+      <label>קוד הרשמה</label>
+      <input type="password" id="login-regcode" placeholder="קוד שקיבלת מהמנהל" autocomplete="off" inputmode="numeric">
+    </div>
 
     <button class="btn-login" id="auth-submit" onclick="doAuth()">כניסה</button>
     <div class="error-msg" id="login-error"></div>
@@ -886,6 +890,11 @@ async function buildLoginSelect(){ /* no-op in pilot auth mode */ }
 
 // ===== NEW SECURE AUTH (username + password, no real emails) =====
 const FAKE_DOMAIN='quals-pilot.local';
+// ============================================================
+// קוד הרשמה פנימי — נדרש כדי להירשם למערכת (לא במסד הנתונים).
+// כדי לשנות את הקוד: החליפו את הערך כאן.
+const REGISTRATION_CODE = '2580';
+// ============================================================
 let authMode='login';
 function usernameToEmail(username){
   const norm=username.trim().toLowerCase();
@@ -901,6 +910,7 @@ window.switchAuthTab=function(mode){
   document.getElementById('auth-submit').textContent=isReg?'הרשמה':'כניסה';
   document.getElementById('register-prompt').style.display=isReg?'none':'block';
   document.getElementById('back-to-login').style.display=isReg?'block':'none';
+  document.getElementById('regcode-field').style.display=isReg?'block':'none';
   document.getElementById('login-error').textContent='';
 };
 function translateAuthError(code){
@@ -921,6 +931,10 @@ window.doAuth=async function(){
   err.textContent='';
   if(!username){err.textContent='יש להזין שם משתמש';return;}
   if(password.length<6){err.textContent='הסיסמה חייבת להיות לפחות 6 תווים';return;}
+  if(authMode==='register'){
+    const code=document.getElementById('login-regcode').value.trim();
+    if(code!==REGISTRATION_CODE){err.textContent='קוד הרשמה שגוי';return;}
+  }
   const email=usernameToEmail(username);
   showLoading(true);
   try{
