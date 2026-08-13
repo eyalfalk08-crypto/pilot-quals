@@ -246,7 +246,11 @@ tbody td{padding:10px 12px;font-size:13px;vertical-align:middle;}
     </div>
     <div class="form-group">
       <label>סיסמה</label>
-      <input type="password" id="login-password" placeholder="לפחות 6 תווים" autocomplete="off">
+      <div style="position:relative;">
+        <input type="password" id="login-password" placeholder="לפחות 6 תווים" autocomplete="off" style="width:100%;padding-left:44px;">
+        <button type="button" id="toggle-pw" onclick="togglePw()" aria-label="הצג סיסמה"
+          style="position:absolute;left:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;padding:4px;font-size:18px;line-height:1;">👁️</button>
+      </div>
     </div>
     <div class="form-group" id="regcode-field" style="display:none;">
       <label>קוד הרשמה</label>
@@ -543,6 +547,13 @@ tbody td{padding:10px 12px;font-size:13px;vertical-align:middle;}
         <div class="warning-box">מחיקת עובד מוחקת את <b>הנתונים</b> שלו (כשירויות, שיוכים, זמינות) מלוח הבקרה — אך <b>לא</b> את חשבון ההתחברות שלו. הוא עדיין יוכל להתחבר.</div>
         <div id="emp-manage-list"></div>
         <div class="panel-save-msg" id="emp-manage-msg">בוצע!</div>
+      </div>
+
+      <div class="panel-card">
+        <h3>🔒 משתמשים חסומים</h3>
+        <p class="panel-sub">משתמשים שנחסמו לאחר 3 ניסיונות כניסה כושלים. לחצו "שחרר" כדי לאפשר להם להתחבר שוב.</p>
+        <div id="lockouts-list"></div>
+        <div class="panel-save-msg" id="lockouts-msg">בוצע!</div>
       </div>
 
       <div class="panel-card">
@@ -909,6 +920,15 @@ function usernameToEmail(username){
   const safe='u'+Math.abs(h).toString(36)+'_'+encodeURIComponent(norm).replace(/[^a-z0-9]/gi,'').slice(0,12);
   return safe+'@'+FAKE_DOMAIN;
 }
+// Counts failed login attempts per name within this browser session.
+let _failedAttempts={};
+// Firebase-safe key for a username (no . # $ [ ] / chars), used under /lockouts.
+function lockoutKey(username){
+  const norm=(username||'').trim().toLowerCase();
+  let h=0;
+  for(let i=0;i<norm.length;i++){h=((h<<5)-h+norm.charCodeAt(i))|0;}
+  return 'k'+Math.abs(h).toString(36)+'_'+encodeURIComponent(norm).replace(/[^a-z0-9]/gi,'').slice(0,12);
+}
 window.switchAuthTab=function(mode){
   authMode=mode;
   const isReg=mode==='register';
@@ -939,6 +959,13 @@ window.onNamePicked=function(){
   const inp=document.getElementById('login-username');
   if(sel&&inp) inp.value=sel.value;
 };
+window.togglePw=function(){
+  const inp=document.getElementById('login-password');
+  const btn=document.getElementById('toggle-pw');
+  if(!inp)return;
+  if(inp.type==='password'){ inp.type='text'; btn.textContent='🙈'; }
+  else { inp.type='password'; btn.textContent='👁️'; }
+};
 function translateAuthError(code){
   switch(code){
     case 'auth/email-already-in-use': return 'שם המשתמש כבר קיים — נסה להתחבר';
@@ -967,6 +994,17 @@ window.doAuth=async function(){
     if(code!==REGISTRATION_CODE){err.textContent='קוד הרשמה שגוי';return;}
   }
   const email=usernameToEmail(username);
+  // Lockout: block login if this name is marked locked in the DB.
+  if(authMode==='login'){
+    try{
+      const lockKey=lockoutKey(username);
+      const locked=await fbGet('lockouts/'+lockKey);
+      if(locked && locked.locked){
+        err.innerHTML='⛔ המשתמש נעול עקב ניסיונות כניסה כושלים. פנה למנהל כדי לשחרר את החסימה.';
+        return;
+      }
+    }catch(e){ /* if lockouts unreadable, don't block login */ }
+  }
   showLoading(true);
   try{
     if(authMode==='register'){
@@ -983,10 +1021,24 @@ window.doAuth=async function(){
       // onAuthStateChanged will route into the app
     } else {
       await auth.signInWithEmailAndPassword(email,password);
+      // success — clear any failed-attempt counter for this name
+      _failedAttempts[username]=0;
     }
   }catch(e){
     showLoading(false);
-    err.textContent=translateAuthError(e.code);
+    if(authMode==='login' && (e.code==='auth/invalid-credential'||e.code==='auth/wrong-password'||e.code==='auth/user-not-found')){
+      _failedAttempts[username]=(_failedAttempts[username]||0)+1;
+      const left=3-_failedAttempts[username];
+      if(_failedAttempts[username]>=3){
+        // Mark locked in DB so the manager can see & release it.
+        try{ await db.ref('lockouts/'+lockoutKey(username)).set({locked:true,name:username,ts:Date.now()}); }catch(_){}
+        err.innerHTML='⛔ <b>המשתמש נחסם</b> לאחר 3 ניסיונות כושלים. פנה למנהל כדי לפתוח את החסימה.';
+      } else {
+        err.innerHTML='❌ סיסמה שגויה. נותרו '+left+' ניסיונות לפני חסימה.';
+      }
+    } else {
+      err.textContent=translateAuthError(e.code);
+    }
   }
 };
 
@@ -1197,7 +1249,7 @@ window.showMasterTab=function(tab){
   if(tab==='history') buildHistoryControls();
   if(tab==='weekly') buildWeeklyControls();
   if(tab==='messages') buildMessagesEditor();
-  if(tab==='employees'){ buildEmployeeManager(); buildAvailabilityTable(); }
+  if(tab==='employees'){ buildEmployeeManager(); buildAvailabilityTable(); buildLockoutsList(); }
   if(tab==='migration') buildMigrationTool();
   if(tab==='dashboard') renderMasterView();
 };
@@ -1734,6 +1786,45 @@ async function buildEmployeeManager(){
   _workingEmps=[...emps];
   renderEmpRows(_workingEmps);
 }
+
+// Manager view of locked-out users, with a release button.
+async function buildLockoutsList(){
+  const box=document.getElementById('lockouts-list');
+  if(!box) return;
+  box.innerHTML='<div style="color:#888;font-size:13px;">טוען...</div>';
+  try{
+    const locks=(await fbGet('lockouts'))||{};
+    const entries=Object.entries(locks).filter(([,v])=>v&&v.locked);
+    if(!entries.length){
+      box.innerHTML='<div style="color:#166534;font-size:13px;font-weight:600;padding:.4rem;">✔ אין משתמשים חסומים.</div>';
+      return;
+    }
+    box.innerHTML='';
+    entries.forEach(([key,v])=>{
+      const when=v.ts?new Date(v.ts).toLocaleString('he-IL'):'';
+      const row=document.createElement('div');
+      row.style.cssText='display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px;margin-bottom:8px;flex-wrap:wrap;';
+      row.innerHTML=
+        '<div style="flex:1;min-width:100px;font-weight:700;color:#991b1b;">🔒 '+(v.name||'(ללא שם)')+'</div>'+
+        (when?'<span style="font-size:11px;color:#b91c1c;">נחסם: '+when+'</span>':'')+
+        '<button onclick="releaseLockout(\''+key+'\')" style="background:#16a34a;color:#fff;border:none;border-radius:7px;padding:8px 16px;font-size:13px;font-weight:700;cursor:pointer;">שחרר</button>';
+      box.appendChild(row);
+    });
+  }catch(e){
+    box.innerHTML='<div style="color:#dc2626;font-size:13px;">שגיאה בטעינת רשימת החסומים.</div>';
+  }
+}
+window.releaseLockout=async function(key){
+  if(!confirm('לשחרר את החסימה? המשתמש יוכל להתחבר שוב.'))return;
+  showLoading(true);
+  try{
+    await db.ref('lockouts/'+key).remove();
+    await buildLockoutsList();
+    showSaveMsg('lockouts-msg');
+  }catch(e){ alert('שגיאה בשחרור: '+e.message); }
+  showLoading(false);
+};
+
 function renderEmpRows(emps){
   const c=document.getElementById('emp-manage-list');c.innerHTML='';
   if(!emps.length){
