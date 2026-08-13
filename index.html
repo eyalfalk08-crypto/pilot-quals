@@ -718,13 +718,13 @@ function showFirebaseError(){
 
 async function getEmployees(){
   if(cachedEmployees) return cachedEmployees;
-  // New model: employees are the registered auth users with role 'employee'.
-  // Each is returned as {id: <uid>, name} so all existing manager screens
-  // (assignments, availability, dashboard) keep working unchanged.
+  // Employees are the registered auth users with role 'employee'. Each is returned
+  // as {id: <stable empId>, name} — id is the name-based data key (not the uid), so
+  // it stays consistent across re-registrations and matches where the data lives.
   const authUsers=await fbGet('authUsers')||{};
   const list=Object.entries(authUsers)
     .filter(([,u])=>u && u.role!=='manager')
-    .map(([uid,u])=>({id:uid,name:u.name||'עובד'}))
+    .map(([uid,u])=>({id:u.empId||uid,name:u.name||'עובד'}))
     .sort((a,b)=>a.name<b.name?-1:(a.name>b.name?1:0));
   cachedEmployees=list;
   return cachedEmployees;
@@ -929,6 +929,13 @@ function lockoutKey(username){
   for(let i=0;i<norm.length;i++){h=((h<<5)-h+norm.charCodeAt(i))|0;}
   return 'k'+Math.abs(h).toString(36)+'_'+encodeURIComponent(norm).replace(/[^a-z0-9]/gi,'').slice(0,12);
 }
+// Stable data key derived from the name, so re-registration restores the same data.
+function nameToDataKey(username){
+  const norm=(username||'').trim().toLowerCase();
+  let h=0;
+  for(let i=0;i<norm.length;i++){h=((h<<5)-h+norm.charCodeAt(i))|0;}
+  return 'e'+Math.abs(h).toString(36)+'_'+encodeURIComponent(norm).replace(/[^a-z0-9]/gi,'').slice(0,12);
+}
 window.switchAuthTab=function(mode){
   authMode=mode;
   const isReg=mode==='register';
@@ -1009,11 +1016,15 @@ window.doAuth=async function(){
   try{
     if(authMode==='register'){
       const cred=await auth.createUserWithEmailAndPassword(email,password);
+      // empId is a STABLE key derived from the name (not the UID), so if the user
+      // ever re-registers (e.g. after a password reset), the same name maps back to
+      // the same data — history returns automatically without manual re-linking.
+      const stableId=nameToDataKey(username);
       // Everyone registers as an employee. Manager is granted only in the Console.
       await db.ref('authUsers/'+cred.user.uid).set({
         name:username,
         role:'employee',
-        empId:cred.user.uid, // this user's qualification data lives under their own UID
+        empId:stableId,
         createdAt:Date.now()
       });
       // Add the display name to the public login list (name only — no sensitive data)
@@ -1833,10 +1844,12 @@ function renderEmpRows(emps){
   }
   emps.forEach((emp,i)=>{
     const div=document.createElement('div');div.className='emp-manage-row';
+    const safeName=emp.name.replace(/'/g,"\\'");
     div.innerHTML=
       '<div class="emp-manage-num">'+(i+1)+'</div>'+
       '<div style="flex:1;min-width:90px;font-weight:600;">'+emp.name+'</div>'+
-      '<button class="btn-del-emp" onclick="deleteEmployee(\''+emp.id+'\',\''+emp.name.replace(/'/g,"\\'")+'\')" title="מחק עובד">×</button>';
+      '<button onclick="resetEmployeeAccess(\''+emp.id+'\',\''+safeName+'\')" title="אפס גישה (העובד יירשם מחדש, הנתונים יישמרו)" style="background:#fef3c7;color:#92400e;border:none;border-radius:7px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;margin-left:6px;">🔑 אפס גישה</button>'+
+      '<button class="btn-del-emp" onclick="deleteEmployee(\''+emp.id+'\',\''+safeName+'\')" title="מחק נתוני עובד">×</button>';
     c.appendChild(div);
   });
 }
@@ -1844,13 +1857,49 @@ function renderEmpRows(emps){
 window.addEmployee=function(){
   alert('עובדים נרשמים בעצמם דרך מסך ההרשמה — הם יופיעו כאן אוטומטית.');
 };
-window.deleteEmployee=async function(uid,name){
+
+// Find the authUsers UID whose profile.empId matches this stable id.
+async function findUidByEmpId(empId){
+  const authUsers=await fbGet('authUsers')||{};
+  const hit=Object.entries(authUsers).find(([,u])=>u && (u.empId===empId));
+  return hit?hit[0]:null;
+}
+
+// Reset access: remove the login profile so the employee can register again with a
+// new password. Data stays (it lives under the stable name key) and returns on
+// re-registration. The Firebase Auth login account itself must be deleted in the
+// Console (there's no client-side way without a Cloud Function).
+window.resetEmployeeAccess=async function(empId,name){
+  if(!confirm('לאפס גישה עבור "'+name+'"?\n\nהעובד יצטרך להירשם מחדש עם סיסמה חדשה (שם זהה + קוד הרשמה). כל הנתונים שלו יישמרו ויחזרו אליו אוטומטית.\n\nחשוב: לאחר האיפוס, יש למחוק את חשבון ההתחברות הישן של העובד ב-Firebase Console (Authentication) כדי שיוכל להירשם מחדש עם אותו שם.'))return;
+  showLoading(true);
+  try{
+    const uid=await findUidByEmpId(empId);
+    if(uid){
+      await db.ref('authUsers/'+uid).remove();
+      await db.ref('publicNames/'+uid).remove();
+    }
+    // also clear any lockout on this name
+    try{ await db.ref('lockouts/'+lockoutKey(name)).remove(); }catch(_){}
+    cachedEmployees=null;
+    await buildEmployeeManager();
+    alert('הגישה אופסה. כעת מחק את חשבון ההתחברות של "'+name+'" ב-Console (Authentication), והעובד יוכל להירשם מחדש. הנתונים שלו שמורים.');
+  }catch(e){ alert('שגיאה: '+e.message); }
+  showLoading(false);
+  showSaveMsg('emp-manage-msg');
+};
+
+window.deleteEmployee=async function(empId,name){
   if(!confirm('למחוק את הנתונים של "'+name+'"?\n\nפעולה זו מוחקת את הכשירויות, השיוכים והזמינות של העובד מלוח הבקרה.\n\nשימו לב: חשבון ההתחברות של העובד נשאר קיים — הוא עדיין יוכל להתחבר. זו אינה מחיקה לצמיתות.'))return;
   showLoading(true);
   try{
-    await db.ref('authUsers/'+uid).remove();
-    await db.ref('quals_config/assignments/'+uid).remove();
-    await db.ref('quals_config/unavailability/'+uid).remove();
+    const uid=await findUidByEmpId(empId);
+    if(uid){
+      await db.ref('authUsers/'+uid).remove();
+      await db.ref('publicNames/'+uid).remove();
+    }
+    await db.ref('quals_data/'+empId).remove();
+    await db.ref('quals_config/assignments/'+empId).remove();
+    await db.ref('quals_config/unavailability/'+empId).remove();
     cachedEmployees=null;cachedAssignments=null;cachedUnavailability=null;
     await buildEmployeeManager();
     await renderMasterView();
